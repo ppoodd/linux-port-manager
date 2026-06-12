@@ -238,7 +238,7 @@ show_free_ports() {
         done
         echo
     fi
-    echo -e "${GREEN}空闲端口数: $free_count${NC}  ${CYAN}放行端口总数: $(echo "$allowed_ports" | wc -l)${NC}"
+    echo -e "${GREEN}空闲端口数: $free_count${NC}  ${CYAN}放行端口总数: $(echo "$allowed_ports" | wc -w)${NC}"
 }
 
 # 主循环
