@@ -150,7 +150,7 @@ show_used_ports() {
         proto = $1; state = $2; local = $5; proc = $7
         split(local, a, ":"); port = a[length(a)]
         pid = ""; if (match(proc, /pid=[0-9]+/)) pid = substr(proc, RSTART+4, RLENGTH-4)
-        pname = ""; if (match(proc, /\(\"[^\"]+"/)) pname = substr(proc, RSTART+2, RLENGTH-3)
+        pname = ""; if (match(proc, /\(["][^"]+/)) pname = substr(proc, RSTART+2, RLENGTH-3)
         printf "%-8s %-10s %-20s %s\n", proto, port, pname, pid
     }' | sort -k2 -n | uniq -f1
     echo
