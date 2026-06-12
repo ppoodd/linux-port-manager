@@ -156,47 +156,89 @@ show_used_ports() {
     echo
 }
 
+# 获取防火墙已放行的端口
+get_allowed_ports() {
+    local firewall_type=$(detect_firewall)
+    local ports=""
+    case $firewall_type in
+        ufw)
+            ports=$(ufw status verbose 2>/dev/null | awk '/^[0-9]/ || /^[[:space:]]*[0-9]+/{
+                for(i=1;i<=NF;i++) {
+                    if($i ~ /^[0-9]+(,[0-9]+)*$/) {
+                        split($i,p,",")
+                        for(j in p) print p[j]
+                    }
+                }
+            }' | sort -un)
+            # 备用解析
+            if [ -z "$ports" ]; then
+                ports=$(ufw status 2>/dev/null | grep -oP '^[0-9]+(/[a-z]+)?\s' | grep -oP '^[0-9]+' | sort -un)
+            fi
+            ;;
+        firewalld)
+            ports=$(firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep -v '^$' | cut -d'/' -f1 | sort -un)
+            local rich_rules=$(firewall-cmd --list-rich-rules 2>/dev/null | grep -oP 'port="[^"]*"' | cut -d'"' -f2 | sort -un)
+            if [ -n "$rich_rules" ]; then
+                ports=$(printf "%s\n%s" "$ports" "$rich_rules" | sort -un)
+            fi
+            ;;
+        iptables)
+            ports=$(iptables -S INPUT 2>/dev/null | awk '/-j ACCEPT/ && /--dport/ {
+                for(i=1;i<=NF;i++) if($i=="--dport") { print $(i+1); break }
+            }' | sort -un)
+            ;;
+        *) echo ""; return ;;
+    esac
+    echo "$ports"
+}
+
 # 查看空闲端口
 show_free_ports() {
     echo -e "\n${BLUE}=== 查看空闲端口 ===${NC}\n"
-    echo -e "${YELLOW}空闲端口 = 没有进程监听的端口${NC}\n"
+    echo -e "${YELLOW}空闲端口 = 防火墙已放行但没有程序监听的端口${NC}\n"
 
-    read -p "请输入起始端口 [1]: " start_port
-    start_port=${start_port:-1}
-    read -p "请输入结束端口 [1024]: " end_port
-    end_port=${end_port:-1024}
-
-    if ! [[ "$start_port" =~ ^[0-9]+$ ]] || ! [[ "$end_port" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误: 无效的端口范围${NC}"; return 1
+    # 获取防火墙已放行的端口
+    local allowed_ports=$(get_allowed_ports)
+    if [ -z "$allowed_ports" ]; then
+        echo -e "${RED}未检测到防火墙放行规则或防火墙未运行${NC}"
+        return 1
     fi
 
-    if [ "$start_port" -gt "$end_port" ] || [ "$start_port" -lt 1 ] || [ "$end_port" -gt 65535 ]; then
-        echo -e "${RED}错误: 端口范围无效 (1-65535)${NC}"; return 1
-    fi
+    # 获取当前程序监听的端口
+    local listening_ports=$(ss -tunlp 2>/dev/null | awk 'NR>1 {split($5, a, ":"); port=a[length(a)]; print port}' | sort -n | uniq)
 
-    # 获取已监听的端口列表
-    local used_ports=$(ss -tunlp 2>/dev/null | awk 'NR>1 {split($5, a, ":"); port=a[length(a)]; print port}' | sort -n | uniq)
+    echo -e "${CYAN}防火墙放行端口:${NC}"
+    echo "$allowed_ports" | xargs -n 10 | while read line; do
+        echo -e "${GREEN}  $line${NC}"
+    done
+    echo
 
-    echo -e "${CYAN}当前使用端口: ${GREEN}$(echo "$used_ports" | tr '\n' ' ')${NC}\n"
-    echo -e "${GREEN}=== 空闲端口 ===${NC}\n"
+    echo -e "${CYAN}程序监听端口:${NC}"
+    echo "$listening_ports" | xargs -n 10 | while read line; do
+        echo -e "${YELLOW}  $line${NC}"
+    done
+    echo
 
+    # 计算差集：放行但未监听的端口
     local free_ports=""
     local free_count=0
-
-    for port in $(seq $start_port $end_port); do
-        if ! echo "$used_ports" | grep -qw "$port"; then
+    for port in $allowed_ports; do
+        if ! echo "$listening_ports" | grep -qw "$port"; then
             free_ports="$free_ports $port"
             ((free_count++))
         fi
     done
 
-    # 每行显示10个端口
-    echo "$free_ports" | tr ' ' '\n' | grep -v '^$' | xargs -n 10 | while read line; do
-        echo "$line"
-    done
-
-    echo
-    echo -e "${GREEN}空闲端口数: $free_count${NC}  ${YELLOW}已使用端口数: $(echo "$used_ports" | wc -l)${NC}"
+    if [ $free_count -eq 0 ]; then
+        echo -e "${GREEN}所有放行的端口都有程序在监听${NC}"
+    else
+        echo -e "${GREEN}=== 空闲端口 (已放行但未被使用) ===${NC}\n"
+        echo "$free_ports" | tr ' ' '\n' | grep -v '^$' | xargs -n 10 | while read line; do
+            echo "  $line"
+        done
+        echo
+    fi
+    echo -e "${GREEN}空闲端口数: $free_count${NC}  ${CYAN}放行端口总数: $(echo "$allowed_ports" | wc -l)${NC}"
 }
 
 # 主循环
