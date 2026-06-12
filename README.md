@@ -16,7 +16,7 @@
 
 ```bash
 # 下载脚本
-curl -o /root/dk.sh https://raw.githubusercontent.com/你的用户名/linux-port-manager/main/dk.sh
+curl -o /root/dk.sh https://raw.githubusercontent.com/ppoodd/linux-port-manager/main/dk.sh
 
 # 创建快捷命令
 ln -sf /root/dk.sh /usr/local/bin/dk
@@ -30,7 +30,7 @@ dk
 
 ```bash
 # 克隆仓库
-git clone https://github.com/你的用户名/linux-port-manager.git
+git clone https://github.com/ppoodd/linux-port-manager.git
 
 # 进入目录
 cd linux-port-manager
