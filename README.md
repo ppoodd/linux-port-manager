@@ -16,7 +16,7 @@
 
 ```bash
 # 下载脚本
-curl -o /root/dk.sh https://raw.githubusercontent.com/ppoodd/linux-port-manager/main/dk.sh
+curl -o /root/dk.sh https://raw.githubusercontent.com/ppoodd/linux-port-manager/master/dk.sh
 
 # 创建快捷命令
 ln -sf /root/dk.sh /usr/local/bin/dk
