@@ -167,27 +167,34 @@ get_allowed_rules() {
                 # 提取第一个非空白字段（格式: 22/tcp）
                 port_rule=$(echo "$rule" | awk '{print $1}' | tr -d '[:space:]')
 
-                # 解析端口和协议
-                if [[ "$port_rule" == *:* ]]; then
-                    start=${port_rule%%:*}
-                    rest=${port_rule#*:}
-                    end=${rest%%/*}
-                    proto=${rest##*/}
-                    [[ -z "$proto" || "$proto" == "$rest" ]] && proto="tcp"
+                # 提取协议并处理端口规则
+                if [[ "$port_rule" == */* ]]; then
+                    proto="${port_rule##*/}"
+                    port_spec="${port_rule%/*}"
                 else
-                    port=${port_rule%%/*}
-                    proto=${port_rule##*/}
-                    [[ -z "$proto" || "$proto" == "$port_rule" ]] && proto="tcp"
-                    start=$port
-                    end=$port
+                    proto="tcp"
+                    port_spec="$port_rule"
                 fi
 
-                # 验证端口有效性
-                if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]]; then
-                    for ((port=start; port<=end; port++)); do
-                        echo "$proto $port"
-                    done
-                fi
+                # 处理逗号分隔的端口列表
+                IFS=',' read -ra ports <<< "$port_spec"
+                for port_entry in "${ports[@]}"; do
+                    # 处理端口范围 (UFW使用-分隔)
+                    if [[ "$port_entry" == *-* ]]; then
+                        start="${port_entry%%-*}"
+                        end="${port_entry##*-}"
+                    else
+                        start="$port_entry"
+                        end="$port_entry"
+                    fi
+
+                    # 验证并输出有效端口
+                    if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]]; then
+                        for ((p=start; p<=end; p++)); do
+                            echo "$proto $p"
+                        done
+                    fi
+                done
             done
             ;;
         firewalld)
