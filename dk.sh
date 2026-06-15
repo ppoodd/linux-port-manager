@@ -32,7 +32,7 @@ show_menu() {
     echo "  1) 开放端口 (支持批量)"
     echo "  2) 关闭端口 (支持批量)"
     echo "  3) 查看使用端口"
-    echo "  4) 查看空闲端口"
+    echo "  4) 查看放行端口状态"
     echo "  5) 退出"
     echo
 }
@@ -156,89 +156,81 @@ show_used_ports() {
     echo
 }
 
-# 获取防火墙已放行的端口
-get_allowed_ports() {
+# 获取防火墙放行端口（带协议），输出格式: proto port
+get_allowed_rules() {
     local firewall_type=$(detect_firewall)
-    local ports=""
     case $firewall_type in
         ufw)
-            ports=$(ufw status verbose 2>/dev/null | awk '/^[0-9]/ || /^[[:space:]]*[0-9]+/{
-                for(i=1;i<=NF;i++) {
-                    if($i ~ /^[0-9]+(,[0-9]+)*$/) {
-                        split($i,p,",")
-                        for(j in p) print p[j]
-                    }
-                }
-            }' | sort -un)
-            # 备用解析
-            if [ -z "$ports" ]; then
-                ports=$(ufw status 2>/dev/null | grep -oP '^[0-9]+(/[a-z]+)?\s' | grep -oP '^[0-9]+' | sort -un)
-            fi
+            ufw status numbered 2>/dev/null | grep 'ALLOW' | grep -oP '\d+(/\w+)?' | while read entry; do
+                local p=${entry%%/*}
+                local proto=${entry##*/}
+                [[ "$proto" == "$p" ]] && proto="tcp"
+                echo "$proto $p"
+            done
             ;;
         firewalld)
-            ports=$(firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep -v '^$' | cut -d'/' -f1 | sort -un)
-            local rich_rules=$(firewall-cmd --list-rich-rules 2>/dev/null | grep -oP 'port="[^"]*"' | cut -d'"' -f2 | sort -un)
-            if [ -n "$rich_rules" ]; then
-                ports=$(printf "%s\n%s" "$ports" "$rich_rules" | sort -un)
-            fi
+            firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep '/' | while IFS='/' read p proto; do
+                echo "$proto $p"
+            done
             ;;
         iptables)
-            ports=$(iptables -S INPUT 2>/dev/null | awk '/-j ACCEPT/ && /--dport/ {
-                for(i=1;i<=NF;i++) if($i=="--dport") { print $(i+1); break }
-            }' | sort -un)
+            iptables -S INPUT 2>/dev/null | awk '/-j ACCEPT/ && /--dport/ {
+                proto="tcp"
+                for(i=1;i<=NF;i++) {
+                    if($i=="-p") proto=$(i+1)
+                    if($i=="--dport") { print proto, $(i+1); break }
+                }
+            }'
             ;;
-        *) echo ""; return ;;
     esac
-    echo "$ports"
 }
 
-# 查看空闲端口
+# 查看放行端口状态
 show_free_ports() {
-    echo -e "\n${BLUE}=== 查看空闲端口 ===${NC}\n"
-    echo -e "${YELLOW}空闲端口 = 防火墙已放行但没有程序监听的端口${NC}\n"
+    echo -e "\n${BLUE}=== 放行端口状态 ===${NC}\n"
 
-    # 获取防火墙已放行的端口
-    local allowed_ports=$(get_allowed_ports)
-    if [ -z "$allowed_ports" ]; then
-        echo -e "${RED}未检测到防火墙放行规则或防火墙未运行${NC}"
+    local firewall_type=$(detect_firewall)
+    echo -e "防火墙类型: ${GREEN}$firewall_type${NC}\n"
+
+    # 获取放行规则
+    local rules=$(get_allowed_rules)
+    if [ -z "$rules" ]; then
+        echo -e "${RED}未检测到防火墙放行规则${NC}"
         return 1
     fi
 
-    # 获取当前程序监听的端口
-    local listening_ports=$(ss -tunlp 2>/dev/null | awk 'NR>1 {split($5, a, ":"); port=a[length(a)]; print port}' | sort -n | uniq)
+    # 获取监听端口信息：proto:port -> "进程名(PID)"
+    local listening_info=$(ss -tunlp 2>/dev/null | awk 'NR>1 {
+        proto=tolower($1); sub(/-.*$/, "", proto)
+        split($5, a, ":"); port=a[length(a)]
+        proc=$7
+        pid=""; pname=""
+        if (match(proc, /pid=[0-9]+/)) pid=substr(proc, RSTART+4, RLENGTH-4)
+        if (match(proc, /\(["][^"]+/)) pname=substr(proc, RSTART+2, RLENGTH-3)
+        key = proto ":" port
+        if (pid != "") printf "%s %s(%s)\n", key, pname, pid
+    }')
 
-    echo -e "${CYAN}防火墙放行端口:${NC}"
-    echo "$allowed_ports" | xargs -n 10 | while read line; do
-        echo -e "${GREEN}  $line${NC}"
-    done
-    echo
+    printf "%-8s %-8s %-8s %s\n" "协议" "端口" "使用中" "进程"
+    printf "%s\n" "--------------------------------------------"
 
-    echo -e "${CYAN}程序监听端口:${NC}"
-    echo "$listening_ports" | xargs -n 10 | while read line; do
-        echo -e "${YELLOW}  $line${NC}"
-    done
-    echo
-
-    # 计算差集：放行但未监听的端口
-    local free_ports=""
+    local used_count=0
     local free_count=0
-    for port in $allowed_ports; do
-        if ! echo "$listening_ports" | grep -qw "$port"; then
-            free_ports="$free_ports $port"
+
+    echo "$rules" | sort -t' ' -k2 -n | uniq | while read proto port; do
+        local key=$(echo "${proto}:${port}" | tr '[:upper:]' '[:lower:]')
+        local match=$(echo "$listening_info" | grep "^${key} " | head -1)
+        if [ -n "$match" ]; then
+            local proc_info=${match#* }
+            printf "%-8s %-8s ${GREEN}%-8s${NC} %s\n" "$proto" "$port" "是" "$proc_info"
+            ((used_count++))
+        else
+            printf "%-8s %-8s ${YELLOW}%-8s${NC} %s\n" "$proto" "$port" "否" "-"
             ((free_count++))
         fi
     done
 
-    if [ $free_count -eq 0 ]; then
-        echo -e "${GREEN}所有放行的端口都有程序在监听${NC}"
-    else
-        echo -e "${GREEN}=== 空闲端口 (已放行但未被使用) ===${NC}\n"
-        echo "$free_ports" | tr ' ' '\n' | grep -v '^$' | xargs -n 10 | while read line; do
-            echo "  $line"
-        done
-        echo
-    fi
-    echo -e "${GREEN}空闲端口数: $free_count${NC}  ${CYAN}放行端口总数: $(echo "$allowed_ports" | wc -w)${NC}"
+    echo
 }
 
 # 主循环
