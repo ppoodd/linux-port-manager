@@ -161,11 +161,33 @@ get_allowed_rules() {
     local firewall_type=$(detect_firewall)
     case $firewall_type in
         ufw)
-            ufw status numbered 2>/dev/null | grep 'ALLOW' | grep -oP '\d+(/\w+)?' | while read entry; do
-                local p=${entry%%/*}
-                local proto=${entry##*/}
-                [[ "$proto" == "$p" ]] && proto="tcp"
-                echo "$proto $p"
+            ufw status numbered 2>/dev/null | grep -E 'ALLOW|DENY' | while read -r line; do
+                # 移除编号 [ 1] 和空格
+                rule=$(echo "$line" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]*//')
+                # 提取第一个非空白字段（格式: 22/tcp）
+                port_rule=$(echo "$rule" | awk '{print $1}' | tr -d '[:space:]')
+
+                # 解析端口和协议
+                if [[ "$port_rule" == *:* ]]; then
+                    start=${port_rule%%:*}
+                    rest=${port_rule#*:}
+                    end=${rest%%/*}
+                    proto=${rest##*/}
+                    [[ -z "$proto" || "$proto" == "$rest" ]] && proto="tcp"
+                else
+                    port=${port_rule%%/*}
+                    proto=${port_rule##*/}
+                    [[ -z "$proto" || "$proto" == "$port_rule" ]] && proto="tcp"
+                    start=$port
+                    end=$port
+                fi
+
+                # 验证端口有效性
+                if [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]]; then
+                    for ((port=start; port<=end; port++)); do
+                        echo "$proto $port"
+                    done
+                fi
             done
             ;;
         firewalld)
