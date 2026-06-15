@@ -29,11 +29,11 @@ detect_firewall() {
 # 显示菜单
 show_menu() {
     echo -e "${GREEN}请选择操作:${NC}"
-    echo "  1) 开放端口 (支持批量)"
-    echo "  2) 关闭端口 (支持批量)"
-    echo "  3) 查看使用端口"
-    echo "  4) 查看放行端口状态"
-    echo "  5) 退出"
+    echo "  1) 开放端口 (支持批量)
+  2) 关闭端口 (支持批量)
+  3) 查看使用端口
+  4) 查看放行端口状态
+  0) 退出"
     echo
 }
 
@@ -240,13 +240,13 @@ main() {
         echo -e "${CYAN}║    端口管理工具 v2.0      ║${NC}"
         echo -e "${CYAN}╚════════════════════════════╝${NC}"
         show_menu
-        read -p "请输入选项 [1-5]: " choice
+        read -p "请输入选项 [0-4]: " choice
         case $choice in
             1) open_ports ;;
             2) close_ports ;;
             3) show_used_ports ;;
             4) show_free_ports ;;
-            5) echo -e "${GREEN}再见！${NC}"; exit 0 ;;
+            0) echo -e "${GREEN}再见！${NC}"; exit 0 ;;
             *) echo -e "${RED}无效选项${NC}" ;;
         esac
         echo; read -p "按回车键继续..."
